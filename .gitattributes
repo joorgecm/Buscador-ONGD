@@ -1,0 +1,7 @@
+# Default behavior: normalize line endings on commit
+* text=auto eol=lf
+
+# Windows batch / PowerShell scripts keep CRLF if added
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf

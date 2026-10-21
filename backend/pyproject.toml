@@ -1,0 +1,38 @@
+[project]
+name = "buscador-ongd-backend"
+version = "0.1.0"
+description = "Back-end para el Buscador de ONGD (IEI) - Extractores, Scraper, LLM, Wrappers y APIs"
+readme = "README.md"
+authors = [
+    { name = "Jordi Barrachina Méndez", email = "jordibarrachinam@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi[standard]>=0.158.1",
+    "groq>=1.7.0",
+    "httpx>=0.28.1",
+    "lxml>=6.1.3",
+    "pandas>=3.0.6",
+    "psycopg[binary]>=3.3.6",
+    "pydantic-settings>=2.16.1",
+    "pyproj>=3.8.0",
+    "selenium>=4.51.0",
+    "sqlalchemy>=2.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.17.1",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
