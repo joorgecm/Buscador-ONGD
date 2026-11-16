@@ -1,4 +1,8 @@
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
 
 
 class Settings(BaseSettings):
@@ -10,8 +14,22 @@ class Settings(BaseSettings):
     # Base de datos PostgreSQL (SQLAlchemy 2.0 + psycopg v3)
     DATABASE_URL: str = "postgresql+psycopg://postgres:postgres@localhost:5432/buscador_ongd"
 
+    # Rutas a las fuentes de datos originales (por defecto la muestra representativa en data/)
+    CV_CSV_PATH: Path = BACKEND_DIR / "data" / "muestra_entidades_CV_20.csv"
+    WRAPPER_CV_URL: str = "http://127.0.0.1:8000/wrappers/cv"
+    CAT_XML_PATH: Path = BACKEND_DIR / "data" / "Entitats_ONGD_pretty.xml"
+    WRAPPER_CAT_URL: str = "http://127.0.0.1:8000/wrappers/cat"
+    MUNICIPIOS_CAT_PATH: Path = BACKEND_DIR / "data" / "municipios_cat.csv"
+
+    # Scraper y caché de geocodificación
+    GEOCACHE_PATH: Path = BACKEND_DIR / "cache" / "geocache.json"
+    USAR_SELENIUM: bool = True
+    SELENIUM_HEADLESS: bool = True
+
     # LLM (Groq) para clasificar el ámbito de las entidades de Catalunya
     GROQ_API_KEY: str = ""
+    GROQ_MODEL: str = "openai/gpt-oss-20b"
+    GROQ_TAMANO_LOTE: int = 20
 
     # Orígenes permitidos para CORS (por si front-end y back-end se sirven por separado)
     CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
