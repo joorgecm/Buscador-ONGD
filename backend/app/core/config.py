@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     CAT_XML_PATH: Path = BACKEND_DIR / "data" / "Entitats_ONGD_pretty.xml"
     WRAPPER_CAT_URL: str = "http://127.0.0.1:8000/wrappers/cat"
     MUNICIPIOS_CAT_PATH: Path = BACKEND_DIR / "data" / "municipios_cat.csv"
+    CAN_JSON_PATH: Path = BACKEND_DIR / "data" / "canarias_sample.json"
+    WRAPPER_CAN_URL: str = "http://127.0.0.1:8000/wrappers/can"
 
     # Scraper y caché de geocodificación
     GEOCACHE_PATH: Path = BACKEND_DIR / "cache" / "geocache.json"
