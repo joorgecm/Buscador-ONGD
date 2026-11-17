@@ -1,9 +1,10 @@
 import re
 from dataclasses import dataclass
+from pathlib import Path
 
-import httpx
+from lxml import etree
 
-from app.core.config import settings
+from app.core.config import BACKEND_DIR, settings
 from app.extractors.catalogo_municipios import CatalogoMunicipios, clave_texto
 from app.extractors.common import (
     EntidadExtraida,
@@ -17,7 +18,20 @@ from app.llm.clasificador_ambito import ClasificadorAmbito
 from app.models.ambito import Ambito
 from app.schemas.wrapper_cat import EntidadCATOrigen
 from app.scraper.geocoder import GeoScraper, ScraperGeo
-from app.wrappers.wrapperCAT import WrapperCAT
+
+CAMPOS_ORIGEN_CAT: tuple[str, ...] = (
+    "n_mero_registre",
+    "nom_de_l_entitat",
+    "naturalesa",
+    "cif_entitat",
+    "adre_a",
+    "codi_postal",
+    "municipi",
+    "tel_fon",
+    "tel_fon_m_bil",
+    "correu_electr_nic",
+    "web",
+)
 
 PROVINCIAS_CAT: dict[str, str] = {
     "08": "Barcelona",
@@ -46,33 +60,58 @@ class _Candidata:
     url: str | None
 
 
+def _texto_xml(valor: str | None) -> str | None:
+    if valor is None:
+        return None
+    texto = valor.strip()
+    return texto or None
+
+
+def leer_xml_cat(ruta: Path) -> list[EntidadCATOrigen]:
+    """Lee el XML de Catalunya directamente del archivo y devuelve cada `<entitat>` en crudo.
+
+    Lanza `FileNotFoundError` si el archivo no existe y `etree.XMLSyntaxError` si está mal
+    formado. `fila` es la posición (1..n) del elemento `<entitat>` en el documento.
+    """
+    if not ruta.is_file():
+        raise FileNotFoundError(f"No se encontró el archivo XML de Catalunya en: {ruta}")
+    arbol = etree.parse(str(ruta), etree.XMLParser(remove_blank_text=True))
+    return [
+        EntidadCATOrigen(
+            fila=posicion,
+            **{campo: _texto_xml(elemento.findtext(campo)) for campo in CAMPOS_ORIGEN_CAT},
+        )
+        for posicion, elemento in enumerate(arbol.getroot().findall("entitat"), start=1)
+    ]
+
+
 class ExtractorCAT:
     def __init__(
         self,
+        ruta_archivo: Path | str | None = None,
         *,
-        wrapper_url: str | None = None,
-        wrapper: WrapperCAT | None = None,
         scraper: GeoScraper | None = None,
         usar_scraper: bool = True,
         catalogo: CatalogoMunicipios | None = None,
         clasificador: ClasificadorAmbito | None = None,
     ) -> None:
-        self.wrapper_url = wrapper_url or settings.WRAPPER_CAT_URL
-        self.wrapper = wrapper
+        ruta = Path(ruta_archivo) if ruta_archivo is not None else settings.CAT_XML_PATH
+        if not ruta.is_absolute() and not ruta.exists():
+            ruta = BACKEND_DIR / ruta
+        self.ruta_archivo: Path = ruta
         self.scraper = scraper
         self.usar_scraper = usar_scraper
         self.catalogo = catalogo
         self.clasificador = clasificador
 
-    def _obtener_registros_origen(self) -> list[EntidadCATOrigen]:
-        if self.wrapper is not None:
-            return self.wrapper.obtener_entidades()
-
-        response = httpx.get(self.wrapper_url, timeout=30.0)
-        response.raise_for_status()
-        return [EntidadCATOrigen.model_validate(item) for item in response.json()]
-
     def extraer(self) -> ResultadoExtraccion:
+        resultado = ResultadoExtraccion(fuente=Fuente.CAT)
+        try:
+            registros = leer_xml_cat(self.ruta_archivo)
+        except (OSError, etree.XMLSyntaxError) as exc:
+            resultado.error(None, "archivo", TipoError.FORMATO, f"Error al leer el XML: {exc}")
+            return resultado
+
         scraper_propio: ScraperGeo | None = None
         scraper_activo: GeoScraper | None = self.scraper
         if scraper_activo is None and self.usar_scraper:
@@ -80,15 +119,17 @@ class ExtractorCAT:
             scraper_activo = scraper_propio
 
         try:
-            return self._ejecutar_extraccion(scraper_activo)
+            return self._ejecutar_extraccion(registros, scraper_activo, resultado)
         finally:
             if scraper_propio is not None:
                 scraper_propio.cerrar()
 
-    def _ejecutar_extraccion(self, scraper_activo: GeoScraper | None) -> ResultadoExtraccion:
-        resultado = ResultadoExtraccion(fuente=Fuente.CAT)
-        registros = self._obtener_registros_origen()
-
+    def _ejecutar_extraccion(
+        self,
+        registros: list[EntidadCATOrigen],
+        scraper_activo: GeoScraper | None,
+        resultado: ResultadoExtraccion,
+    ) -> ResultadoExtraccion:
         catalogo = self.catalogo or CatalogoMunicipios()
         reparador = ReparadorTexto(
             [t for r in registros for t in (r.nom_de_l_entitat, r.adre_a) if t], catalogo

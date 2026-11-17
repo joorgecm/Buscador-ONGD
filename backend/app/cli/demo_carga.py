@@ -22,7 +22,6 @@ from app.services.carga import (
     obtener_estado_almacen,
     vaciar_almacen,
 )
-from app.wrappers import WrapperCAN, WrapperCAT, WrapperCV
 
 FUENTES_VALIDAS = ("cv", "cat", "can")
 
@@ -62,11 +61,11 @@ def _resolver_ruta_fuente(
 
 def _construir_extractor(fuente: str, ruta: Path, *, usar_scraper: bool):
     if fuente == "cv":
-        return ExtractorCV(wrapper=WrapperCV(ruta), usar_scraper=usar_scraper)
+        return ExtractorCV(ruta, usar_scraper=usar_scraper)
     if fuente == "cat":
-        return ExtractorCAT(wrapper=WrapperCAT(ruta), usar_scraper=usar_scraper)
+        return ExtractorCAT(ruta, usar_scraper=usar_scraper)
     if fuente == "can":
-        return ExtractorCAN(wrapper=WrapperCAN(ruta), usar_scraper=usar_scraper)
+        return ExtractorCAN(ruta, usar_scraper=usar_scraper)
     raise ValueError(f"Fuente no soportada: {fuente}")
 
 

@@ -5,7 +5,6 @@ from app.extractors.common import Fuente, TipoError
 from app.extractors.extractorCV import ExtractorCV
 from app.models.ambito import Ambito
 from app.scraper.geocoder import DatosGeo
-from app.wrappers.wrapperCV import WrapperCV
 
 MUESTRA_CSV = BACKEND_DIR / "data" / "muestra_entidades_CV_20.csv"
 COMPLETO_CSV = BACKEND_DIR / "data" / "entidades_CV.csv"
@@ -35,7 +34,7 @@ class ScraperMock:
 
 
 def test_extractor_cv_muestra_20() -> None:
-    extractor = ExtractorCV(wrapper=WrapperCV(MUESTRA_CSV), usar_scraper=False)
+    extractor = ExtractorCV(MUESTRA_CSV, usar_scraper=False)
     res = extractor.extraer()
 
     assert res.fuente == Fuente.CV
@@ -61,7 +60,7 @@ def test_extractor_cv_muestra_20() -> None:
 
 def test_extractor_cv_con_scraper_asigna_cp_valido() -> None:
     extractor = ExtractorCV(
-        wrapper=WrapperCV(MUESTRA_CSV),
+        MUESTRA_CSV,
         scraper=ScraperMock(cp="46900"),
     )
     res = extractor.extraer()
@@ -74,7 +73,7 @@ def test_extractor_cv_con_scraper_asigna_cp_valido() -> None:
 
 
 def test_extractor_cv_archivo_completo_detecta_duplicados_y_ambitos() -> None:
-    extractor = ExtractorCV(wrapper=WrapperCV(COMPLETO_CSV), usar_scraper=False)
+    extractor = ExtractorCV(COMPLETO_CSV, usar_scraper=False)
     res = extractor.extraer()
 
     ambitos_obtenidos = {e.ambito for e in res.entidades}
@@ -130,7 +129,7 @@ def test_extractor_cv_reparaciones_y_errores(tmp_path: Path) -> None:
     ]
     csv_eval.write_text("\n".join(lineas) + "\n", encoding="utf-8")
 
-    res = ExtractorCV(wrapper=WrapperCV(csv_eval), usar_scraper=False).extraer()
+    res = ExtractorCV(csv_eval, usar_scraper=False).extraer()
 
     assert len(res.entidades) == 2
     assert res.entidades[0].ambito == Ambito.CULTURA_Y_DESARROLLO_COMUNITARIO
@@ -155,3 +154,12 @@ def test_extractor_cv_reparaciones_y_errores(tmp_path: Path) -> None:
     }
     campos_reparados = {r.campo for r in res.reparaciones}
     assert campos_esperados <= campos_reparados
+
+
+def test_extractor_cv_informa_archivo_inexistente(tmp_path: Path) -> None:
+    res = ExtractorCV(tmp_path / "no_existe.csv", usar_scraper=False).extraer()
+
+    assert res.entidades == []
+    assert [(e.fila, e.campo, e.tipo) for e in res.errores] == [
+        (None, "archivo", TipoError.FORMATO)
+    ]

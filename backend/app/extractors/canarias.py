@@ -20,8 +20,6 @@ import unicodedata
 from pathlib import Path
 from typing import Any
 
-import httpx
-
 from app.core.config import BACKEND_DIR, settings
 from app.extractors.common import (
     EntidadExtraida,
@@ -30,12 +28,10 @@ from app.extractors.common import (
     TipoError,
 )
 from app.models.ambito import Ambito
-from app.schemas.wrapper_can import EntidadCANOrigen
 from app.scraper.geocoder import GeoScraper, ScraperGeo
-from app.wrappers.wrapperCAN import WrapperCAN
 
 # Ruta por defecto a los datos de Canarias
-DEFAULT_DATA_PATH = BACKEND_DIR / "data" / "canarias_sample.json"
+DEFAULT_DATA_PATH = settings.CAN_JSON_PATH
 
 PROVINCIAS_CAN: dict[str, str] = {
     "35": "Las Palmas",
@@ -567,16 +563,10 @@ def _procesar_registros(
     """Itera sobre las filas del JSON de Canarias y rellena `resultado`."""
     entidades_vistas: set[str] = set()
 
-    for idx, item in enumerate(datos, start=1):
-        if isinstance(item, EntidadCANOrigen):
-            num_fila = item.fila
-            fila = item.model_dump(exclude={"fila"})
-        elif isinstance(item, dict):
-            num_fila = idx
-            fila = item
-        else:
+    for num_fila, fila in enumerate(datos, start=1):
+        if not isinstance(fila, dict):
             resultado.error(
-                fila=idx,
+                fila=num_fila,
                 campo="registro",
                 tipo=TipoError.FORMATO,
                 motivo="Cada elemento del JSON debe ser un objeto",
@@ -765,32 +755,60 @@ def _procesar_registros(
 
 
 class ExtractorCAN:
-    """Extractor de Canarias integrado con `WrapperCAN` o su endpoint REST."""
+    """Extractor de Canarias: lee el archivo JSON de origen directamente."""
 
     def __init__(
         self,
+        ruta_archivo: Path | str | None = None,
         *,
-        wrapper_url: str | None = None,
-        wrapper: WrapperCAN | None = None,
         scraper: GeoScraper | None = None,
         usar_scraper: bool = True,
     ) -> None:
-        self.wrapper_url = wrapper_url or settings.WRAPPER_CAN_URL
-        self.wrapper = wrapper
+        ruta = Path(ruta_archivo) if ruta_archivo is not None else DEFAULT_DATA_PATH
+        if not ruta.is_absolute() and not ruta.exists():
+            ruta = BACKEND_DIR / ruta
+        self.ruta_archivo: Path = ruta
         self.scraper = scraper
         self.usar_scraper = usar_scraper
 
-    def _obtener_registros_origen(self) -> list[EntidadCANOrigen]:
-        if self.wrapper is not None:
-            return self.wrapper.obtener_entidades()
+    def _leer_json(self, resultado: ResultadoExtraccion) -> list[Any] | None:
+        """Lee el JSON de origen; si no es válido, lo informa y devuelve `None`."""
+        if not self.ruta_archivo.exists():
+            resultado.error(
+                fila=None,
+                campo="archivo",
+                tipo=TipoError.FORMATO,
+                motivo=f"No se encontró el archivo de datos en: {self.ruta_archivo}",
+            )
+            return None
 
-        response = httpx.get(self.wrapper_url, timeout=30.0)
-        response.raise_for_status()
-        return [EntidadCANOrigen.model_validate(item) for item in response.json()]
+        try:
+            with open(self.ruta_archivo, encoding="utf-8") as f:
+                datos = json.load(f)
+        except (OSError, json.JSONDecodeError) as exc:
+            resultado.error(
+                fila=None,
+                campo="archivo",
+                tipo=TipoError.FORMATO,
+                motivo=f"Error al leer el JSON de Canarias: {exc}",
+            )
+            return None
+
+        if not isinstance(datos, list):
+            resultado.error(
+                fila=None,
+                campo="archivo",
+                tipo=TipoError.FORMATO,
+                motivo="El archivo JSON de Canarias debe contener una lista de entidades",
+            )
+            return None
+        return datos
 
     def extraer(self) -> ResultadoExtraccion:
         resultado = ResultadoExtraccion(fuente=Fuente.CAN)
-        registros = self._obtener_registros_origen()
+        datos = self._leer_json(resultado)
+        if datos is None:
+            return resultado
 
         scraper_propio: ScraperGeo | None = None
         scraper_activo: GeoScraper | None = self.scraper
@@ -799,7 +817,7 @@ class ExtractorCAN:
             scraper_activo = scraper_propio
 
         try:
-            _procesar_registros(registros, scraper_activo, resultado)
+            _procesar_registros(datos, scraper_activo, resultado)
         finally:
             if scraper_propio is not None:
                 scraper_propio.cerrar()
@@ -812,63 +830,5 @@ def extraer_canarias(
     usar_scraper: bool = True,
     scraper: GeoScraper | None = None,
 ) -> ResultadoExtraccion:
-    """Extrae, valida y limpia las entidades del dataset JSON de Canarias.
-
-    Args:
-        ruta_archivo: Ruta al archivo JSON (ej. `canarias_sample.json` o `canarias.json`).
-        usar_scraper: Booleano para activar el scraping de código postal y coordenadas.
-        scraper: Instancia opcional compatible con `GeoScraper` (útil para inyección en tests).
-
-    Returns:
-        ResultadoExtraccion con las entidades extraídas, errores y reparaciones aplicadas.
-    """
-    ruta = Path(ruta_archivo) if ruta_archivo is not None else DEFAULT_DATA_PATH
-    if not ruta.is_absolute() and not ruta.exists():
-        ruta = BACKEND_DIR / ruta
-    resultado = ResultadoExtraccion(fuente=Fuente.CAN)
-
-    # 1. Leer el archivo JSON con codificación UTF-8
-    if not ruta.exists():
-        resultado.error(
-            fila=None,
-            campo="archivo",
-            tipo=TipoError.FORMATO,
-            motivo=f"No se encontró el archivo de datos en: {ruta}",
-        )
-        return resultado
-
-    try:
-        with open(ruta, encoding="utf-8") as f:
-            datos = json.load(f)
-    except (OSError, json.JSONDecodeError) as exc:
-        resultado.error(
-            fila=None,
-            campo="archivo",
-            tipo=TipoError.FORMATO,
-            motivo=f"Error al leer el JSON de Canarias: {exc}",
-        )
-        return resultado
-
-    if not isinstance(datos, list):
-        resultado.error(
-            fila=None,
-            campo="archivo",
-            tipo=TipoError.FORMATO,
-            motivo="El archivo JSON de Canarias debe contener una lista de entidades",
-        )
-        return resultado
-
-    # 2. Configurar scraper si procede y procesar los registros
-    scraper_propio: ScraperGeo | None = None
-    scraper_activo: GeoScraper | None = scraper
-    if scraper_activo is None and usar_scraper:
-        scraper_propio = ScraperGeo()
-        scraper_activo = scraper_propio
-
-    try:
-        _procesar_registros(datos, scraper_activo, resultado)
-    finally:
-        if scraper_propio is not None:
-            scraper_propio.cerrar()
-
-    return resultado
+    """Atajo funcional de `ExtractorCAN(ruta_archivo, ...).extraer()`."""
+    return ExtractorCAN(ruta_archivo, scraper=scraper, usar_scraper=usar_scraper).extraer()

@@ -6,7 +6,6 @@ from app.extractors.extractorCAT import ExtractorCAT
 from app.llm.clasificador_ambito import ResultadoAmbito
 from app.models.ambito import Ambito
 from app.scraper.geocoder import DatosGeo
-from app.wrappers.wrapperCAT import WrapperCAT
 
 CABECERA = '<?xml version="1.0" encoding="utf-8"?>\n<registre_ongd>\n'
 
@@ -61,7 +60,7 @@ def _extraer(
     xml = tmp_path / "cat.xml"
     xml.write_text(CABECERA + "".join(entidades) + "</registre_ongd>", encoding="utf-8")
     return ExtractorCAT(
-        wrapper=WrapperCAT(xml),
+        xml,
         scraper=GeoFalso(geo or DatosGeo(latitud=41.4, longitud=2.1)),
         catalogo=CatalogoMunicipios(),
         clasificador=clasificador or ClasificadorFalso(),
@@ -165,3 +164,15 @@ def test_ambito_por_defecto_se_informa_como_reparacion(tmp_path: Path) -> None:
     resultado = _extraer(tmp_path, [_entitat()], clasificador=ClasificadorFalso(por_defecto=True))
 
     assert any(r.campo == "ambito" for r in resultado.reparaciones)
+
+
+def test_xml_inexistente_o_mal_formado_se_informa(tmp_path: Path) -> None:
+    roto = tmp_path / "roto.xml"
+    roto.write_text("<registre_ongd><entitat>", encoding="utf-8")
+
+    for ruta in (tmp_path / "no_existe.xml", roto):
+        res = ExtractorCAT(ruta, usar_scraper=False, clasificador=ClasificadorFalso()).extraer()
+        assert res.entidades == []
+        assert [(e.fila, e.campo, e.tipo) for e in res.errores] == [
+            (None, "archivo", TipoError.FORMATO)
+        ]
