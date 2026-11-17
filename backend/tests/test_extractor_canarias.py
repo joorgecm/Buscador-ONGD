@@ -1,13 +1,12 @@
 import json
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 from app.core.config import BACKEND_DIR
 from app.extractors import ExtractorCAN, ExtractorCAT, ExtractorCV, extraer_canarias
 from app.extractors.common import Fuente, TipoError
 from app.models.ambito import Ambito
 from app.scraper.geocoder import DatosGeo
-from app.wrappers import WrapperCAN
 
 MUESTRA_JSON = BACKEND_DIR / "data" / "canarias_sample.json"
 COMPLETO_JSON = BACKEND_DIR / "data" / "canarias.json"
@@ -358,9 +357,9 @@ def test_extractor_canarias_tolera_datos_distintos_tipos_e_inconsistencias(
     ]
 
 
-def test_extractor_can_con_wrapper_y_scraper() -> None:
+def test_extractor_can_lee_archivo_directamente_con_scraper() -> None:
     extractor = ExtractorCAN(
-        wrapper=WrapperCAN(MUESTRA_JSON),
+        MUESTRA_JSON,
         scraper=ScraperMock(
             {
                 "Las Palmas": DatosGeo(codigo_postal="35019", latitud=28.1043, longitud=-15.4513),
@@ -383,24 +382,13 @@ def test_extractor_can_con_wrapper_y_scraper() -> None:
     assert res.entidades[0].latitud == 28.1043
 
 
-def test_extractor_can_desde_endpoint_http() -> None:
-    payload = [
-        {
-            "fila": 1,
-            **_registro(numero_registro="1"),
-        }
-    ]
-    mock_resp = Mock()
-    mock_resp.json.return_value = payload
-    mock_resp.raise_for_status.return_value = None
+def test_extractor_can_no_usa_red_ni_wrapper(tmp_path: Path) -> None:
+    archivo = tmp_path / "can.json"
+    archivo.write_text(json.dumps([_registro(numero_registro="1")]), encoding="utf-8")
 
-    with patch("app.extractors.canarias.httpx.get", return_value=mock_resp) as mock_get:
-        res = ExtractorCAN(
-            wrapper_url="http://127.0.0.1:8000/wrappers/can",
-            usar_scraper=False,
-        ).extraer()
+    with patch("httpx.get", side_effect=AssertionError("no debe llamar a la red")):
+        res = ExtractorCAN(archivo, usar_scraper=False).extraer()
 
-    mock_get.assert_called_once_with("http://127.0.0.1:8000/wrappers/can", timeout=30.0)
     assert len(res.entidades) == 1
     assert res.entidades[0].nombre == "Entidad Prueba Canarias"
 

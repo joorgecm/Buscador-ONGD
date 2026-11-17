@@ -1,10 +1,12 @@
+import csv
+import io
 import re
 import unicodedata
+from pathlib import Path
 
-import httpx
 from pyproj import Transformer
 
-from app.core.config import settings
+from app.core.config import BACKEND_DIR, settings
 from app.extractors.common import (
     EntidadExtraida,
     Fuente,
@@ -14,7 +16,23 @@ from app.extractors.common import (
 from app.models.ambito import Ambito
 from app.schemas.wrapper_cv import EntidadCVOrigen
 from app.scraper.geocoder import GeoScraper, ScraperGeo
-from app.wrappers.wrapperCV import WrapperCV
+
+COLUMNAS_ORIGEN_CV: tuple[str, ...] = (
+    "WKT",
+    "id",
+    "tipo_centro",
+    "nombre",
+    "domici",
+    "cod_ine_mun",
+    "provincia",
+    "municipio",
+    "sector",
+    "clasificacion",
+    "email",
+    "telefono",
+    "x_25830",
+    "y_25830",
+)
 
 PROVINCIAS_CV: dict[str, str] = {
     "03": "Alacant/Alicante",
@@ -81,29 +99,66 @@ def _deducir_codigo_provincia(nombre_provincia: str | None) -> str | None:
     return None
 
 
+def _celda(valor: str | None) -> str | None:
+    return None if valor is None or valor == "" else valor
+
+
+def leer_csv_cv(ruta: Path) -> list[EntidadCVOrigen]:
+    """Lee el CSV de la CV directamente del archivo y devuelve sus filas en crudo.
+
+    Lanza `FileNotFoundError` si el archivo no existe. Tolera BOM, codificación cp1252
+    y separador `;`. Las filas totalmente vacías se ignoran.
+    """
+    if not ruta.is_file():
+        raise FileNotFoundError(
+            f"No se encontró el archivo CSV de la Comunitat Valenciana en: {ruta}"
+        )
+    try:
+        contenido = ruta.read_text(encoding="utf-8-sig")
+    except UnicodeDecodeError:
+        contenido = ruta.read_text(encoding="cp1252")
+    if not contenido.strip():
+        return []
+
+    primera_linea = contenido.splitlines()[0]
+    delimitador = ";" if "," not in primera_linea and ";" in primera_linea else ","
+    reader = csv.DictReader(io.StringIO(contenido), delimiter=delimitador, quotechar='"')
+    if reader.fieldnames is None:
+        return []
+    reader.fieldnames = [col.strip() for col in reader.fieldnames]
+
+    registros: list[EntidadCVOrigen] = []
+    for raw_row in reader:
+        if not any(k is not None and v and v.strip() for k, v in raw_row.items()):
+            continue
+        datos = {col: _celda(raw_row.get(col)) for col in COLUMNAS_ORIGEN_CV}
+        registros.append(EntidadCVOrigen(fila=reader.line_num, **datos))
+    return registros
+
+
 class ExtractorCV:
     def __init__(
         self,
+        ruta_archivo: Path | str | None = None,
         *,
-        wrapper_url: str | None = None,
-        wrapper: WrapperCV | None = None,
         scraper: GeoScraper | None = None,
         usar_scraper: bool = True,
     ) -> None:
-        self.wrapper_url = wrapper_url or settings.WRAPPER_CV_URL
-        self.wrapper = wrapper
+        ruta = Path(ruta_archivo) if ruta_archivo is not None else settings.CV_CSV_PATH
+        if not ruta.is_absolute() and not ruta.exists():
+            ruta = BACKEND_DIR / ruta
+        self.ruta_archivo: Path = ruta
         self.scraper = scraper
         self.usar_scraper = usar_scraper
 
-    def _obtener_registros_origen(self) -> list[EntidadCVOrigen]:
-        if self.wrapper is not None:
-            return self.wrapper.obtener_entidades()
-
-        response = httpx.get(self.wrapper_url, timeout=30.0)
-        response.raise_for_status()
-        return [EntidadCVOrigen.model_validate(item) for item in response.json()]
-
     def extraer(self) -> ResultadoExtraccion:
+        resultado = ResultadoExtraccion(fuente=Fuente.CV)
+        try:
+            registros = leer_csv_cv(self.ruta_archivo)
+        except (OSError, csv.Error) as exc:
+            resultado.error(None, "archivo", TipoError.FORMATO, f"Error al leer el CSV: {exc}")
+            return resultado
+
         scraper_propio: ScraperGeo | None = None
         scraper_activo: GeoScraper | None = self.scraper
         if scraper_activo is None and self.usar_scraper:
@@ -111,14 +166,17 @@ class ExtractorCV:
             scraper_activo = scraper_propio
 
         try:
-            return self._ejecutar_extraccion(scraper_activo)
+            return self._ejecutar_extraccion(registros, scraper_activo, resultado)
         finally:
             if scraper_propio is not None:
                 scraper_propio.cerrar()
 
-    def _ejecutar_extraccion(self, scraper_activo: GeoScraper | None) -> ResultadoExtraccion:
-        resultado = ResultadoExtraccion(fuente=Fuente.CV)
-        registros = self._obtener_registros_origen()
+    def _ejecutar_extraccion(
+        self,
+        registros: list[EntidadCVOrigen],
+        scraper_activo: GeoScraper | None,
+        resultado: ResultadoExtraccion,
+    ) -> ResultadoExtraccion:
 
         ids_vistos: set[str] = set()
         claves_vistas: set[tuple[str, str, str, str, str]] = set()
