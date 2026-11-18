@@ -140,16 +140,17 @@ def ejecutar_demo(
     usar_scraper: bool = True,
     solo_estado: bool = False,
     report_out: Path | None = None,
-    session_factory: Callable[[], Session] = SessionLocal,
+    session_factory: Callable[[], Session] | None = None,
     cache_path: Path | str | None = None,
 ) -> InformeCarga:
     """Orquesta la limpieza opcional, extracción, carga en BD y generación del informe."""
+    factory = session_factory or SessionLocal
     if reset_cache:
         eliminada = limpiar_geocache(cache_path)
         estado_cache = "eliminada" if eliminada else "no existía"
         print(f"Caché de geocodificación {estado_cache}.")
 
-    with session_factory() as db:
+    with factory() as db:
         if reset:
             vaciar_almacen(db)
             print("Base de datos vaciada (TRUNCATE / RESET IDENTITY).")
@@ -324,10 +325,11 @@ def ejecutar_menu(
     *,
     demo_dir_inicial: Path | None = None,
     input_fn: Callable[[str], str] = input,
-    session_factory: Callable[[], Session] = SessionLocal,
+    session_factory: Callable[[], Session] | None = None,
     cache_path: Path | str | None = None,
 ) -> int:
     """Menú interactivo sencillo para ejecutar la demo sin comandos largos."""
+    factory = session_factory or SessionLocal
     demo_detectado = _detectar_demo_dir_por_defecto()
     demo_dir = demo_dir_inicial if demo_dir_inicial is not None else demo_detectado
     usar_scraper = True
@@ -340,7 +342,7 @@ def ejecutar_menu(
         origen_txt = str(demo_dir) if demo_dir is not None else f"{BACKEND_DIR / 'data'} (config)"
         cache_txt = "presente" if ruta_cache.is_file() else "vacía"
         scraper_txt = "activado" if usar_scraper else "desactivado"
-        estado_txt = _leer_estado_seguro(session_factory)
+        estado_txt = _leer_estado_seguro(factory)
 
         print("\n" + "=" * 62)
         print("  DEMO BUSCADOR ONGD (IEI) - MENÚ PRINCIPAL")
@@ -373,7 +375,7 @@ def ejecutar_menu(
                 demo_dir=demo_dir,
                 usar_scraper=usar_scraper,
                 input_fn=input_fn,
-                session_factory=session_factory,
+                session_factory=factory,
                 cache_path=cache_path,
             )
             if informe is not None:
@@ -382,7 +384,7 @@ def ejecutar_menu(
             try:
                 ultimo_informe = ejecutar_demo(
                     solo_estado=True,
-                    session_factory=session_factory,
+                    session_factory=factory,
                     cache_path=cache_path,
                 )
             except Exception as exc:
@@ -390,7 +392,7 @@ def ejecutar_menu(
         elif opcion == "6":
             if _preguntar_si_no(input_fn, "¿Seguro que quieres vaciar toda la BD? [s/N]: "):
                 try:
-                    with session_factory() as db:
+                    with factory() as db:
                         vaciar_almacen(db)
                     print("BD vaciada correctamente.")
                 except Exception as exc:
@@ -403,7 +405,7 @@ def ejecutar_menu(
                 try:
                     ultimo_informe = ejecutar_demo(
                         solo_estado=True,
-                        session_factory=session_factory,
+                        session_factory=factory,
                         cache_path=cache_path,
                     )
                 except Exception as exc:

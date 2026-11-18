@@ -153,10 +153,10 @@ def cargar_resultado_en_bd(db: Session, resultado: ResultadoExtraccion) -> Resum
     cache_localidades: dict[tuple[str, str], Localidad] = {
         (loc.nombre, loc.codigo_provincia): loc for loc in db.scalars(select(Localidad)).all()
     }
-    entidades_existentes: set[tuple[str, int]] = {
-        (nombre.strip().casefold(), cod_loc)
-        for nombre, cod_loc in db.execute(
-            select(Entidad.nombre, Entidad.codigo_localidad)
+    entidades_existentes: set[tuple[str, str, int]] = {
+        (nombre.strip().casefold(), ambito.value, cod_loc)
+        for nombre, ambito, cod_loc in db.execute(
+            select(Entidad.nombre, Entidad.ambito, Entidad.codigo_localidad)
         ).all()
     }
 
@@ -168,7 +168,7 @@ def cargar_resultado_en_bd(db: Session, resultado: ResultadoExtraccion) -> Resum
         loc = _asegurar_localidad(db, cache_localidades, prov.codigo, item.nombre_localidad)
 
         nombre_limpio = item.nombre.strip()[:300]
-        clave_entidad = (nombre_limpio.casefold(), loc.codigo)
+        clave_entidad = (nombre_limpio.casefold(), item.ambito.value, loc.codigo)
         if clave_entidad in entidades_existentes:
             omitidas_duplicado += 1
             continue
